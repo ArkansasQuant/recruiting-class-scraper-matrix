@@ -1,0 +1,141 @@
+name: Run Recruiting Class Scraper (Multi-Year)
+
+on:
+  workflow_dispatch:
+    inputs:
+      years_to_scrape:
+        description: 'Which years to scrape'
+        required: true
+        type: choice
+        options:
+          - 'All Years (2020-2026)'
+          - '2020-2022 Only'
+          - '2023-2026 Only'
+          - '2020 Only'
+          - '2021 Only'
+          - '2022 Only'
+          - '2023 Only'
+          - '2024 Only'
+          - '2025 Only'
+          - '2026 Only'
+        default: 'All Years (2020-2026)'
+      test_mode:
+        description: 'Test mode (50 players) or Full scrape'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  # Job 1: Determine which years to run based on user selection
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      years: ${{ steps.set-years.outputs.years }}
+    steps:
+      - id: set-years
+        run: |
+          case "${{ github.event.inputs.years_to_scrape }}" in
+            "All Years (2020-2026)")
+              echo 'years=["2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "2020-2022 Only")
+              echo 'years=["2020","2021","2022"]' >> $GITHUB_OUTPUT
+              ;;
+            "2023-2026 Only")
+              echo 'years=["2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "2020 Only")
+              echo 'years=["2020"]' >> $GITHUB_OUTPUT
+              ;;
+            "2021 Only")
+              echo 'years=["2021"]' >> $GITHUB_OUTPUT
+              ;;
+            "2022 Only")
+              echo 'years=["2022"]' >> $GITHUB_OUTPUT
+              ;;
+            "2023 Only")
+              echo 'years=["2023"]' >> $GITHUB_OUTPUT
+              ;;
+            "2024 Only")
+              echo 'years=["2024"]' >> $GITHUB_OUTPUT
+              ;;
+            "2025 Only")
+              echo 'years=["2025"]' >> $GITHUB_OUTPUT
+              ;;
+            "2026 Only")
+              echo 'years=["2026"]' >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+  # Job 2: Scrape selected years in parallel
+  scrape:
+    needs: setup
+    strategy:
+      matrix:
+        year: ${{ fromJson(needs.setup.outputs.years) }}
+      fail-fast: false  # Don't cancel other years if one fails
+    
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    name: Scrape ${{ matrix.year }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        playwright install chromium
+    
+    - name: Run scraper for ${{ matrix.year }}
+      run: python scraper.py
+      env:
+        TEST_MODE: ${{ github.event.inputs.test_mode }}
+        SCRAPE_YEAR: ${{ matrix.year }}
+    
+    - name: Validate output structure
+      run: python validate_output.py
+      if: always()
+    
+    - name: Validate accuracy
+      run: python validate_accuracy.py 20
+      if: always()
+    
+    - name: Upload CSV output for ${{ matrix.year }}
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: CSV_Output_${{ matrix.year }}
+        path: output/*.csv
+        retention-days: 90
+    
+    - name: Upload diagnostics for ${{ matrix.year }}
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Diagnostics_${{ matrix.year }}
+        path: output/diagnostics/
+        retention-days: 30
+    
+    - name: Display completion summary
+      if: always()
+      run: |
+        echo "=========================================="
+        echo "🎓 Year ${{ matrix.year }} Complete"
+        echo "=========================================="
+        echo ""
+        echo "📊 Files created:"
+        ls -lh output/*.csv 2>/dev/null || echo "No CSV files"
+        echo ""
+        echo "Download artifacts above!"
+        echo "=========================================="
