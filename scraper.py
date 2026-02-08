@@ -23,7 +23,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 # CONFIGURATION
 # =============================================================================
 
-YEARS = [int(os.getenv('SCRAPE_YEAR', '2019'))]  # Set by workflow matrix
+YEARS = [int(os.getenv('SCRAPE_YEAR', '2020'))]  # Set by workflow matrix (2018-2027)
 OUTPUT_DIR = Path("output")
 TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
 MAX_CONCURRENT = 4
