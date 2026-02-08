@@ -156,7 +156,7 @@ async def click_load_more_until_complete(browser, year: int) -> list:
         return []
 
     click_count = 0
-    max_clicks = 500 if not TEST_MODE else 1
+    max_clicks = 500 if not TEST_MODE else 20  # 20 clicks loads ~300-400 players
     
     while click_count < max_clicks:
         current_players = await page.locator(valid_selector).count()
