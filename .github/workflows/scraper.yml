@@ -8,12 +8,18 @@ on:
         required: true
         type: choice
         options:
+          - 'All Years (2015-2027)'
+          - 'All Years (2015-2026)'
           - 'All Years (2018-2027)'
           - 'All Years (2020-2026)'
+          - 'Historical (2015-2019)'
           - 'Historical (2018-2019)'
           - 'Core Years (2020-2022)'
           - 'Recent Years (2023-2026)'
           - 'Future Planning (2020-2027)'
+          - '2015 Only'
+          - '2016 Only'
+          - '2017 Only'
           - '2018 Only'
           - '2019 Only'
           - '2020 Only'
@@ -44,11 +50,20 @@ jobs:
       - id: set-years
         run: |
           case "${{ github.event.inputs.years_to_scrape }}" in
+            "All Years (2015-2027)")
+              echo 'years=["2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
+              ;;
+            "All Years (2015-2026)")
+              echo 'years=["2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
             "All Years (2018-2027)")
               echo 'years=["2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
               ;;
             "All Years (2020-2026)")
               echo 'years=["2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "Historical (2015-2019)")
+              echo 'years=["2015","2016","2017","2018","2019"]' >> $GITHUB_OUTPUT
               ;;
             "Historical (2018-2019)")
               echo 'years=["2018","2019"]' >> $GITHUB_OUTPUT
@@ -61,6 +76,15 @@ jobs:
               ;;
             "Future Planning (2020-2027)")
               echo 'years=["2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
+              ;;
+            "2015 Only")
+              echo 'years=["2015"]' >> $GITHUB_OUTPUT
+              ;;
+            "2016 Only")
+              echo 'years=["2016"]' >> $GITHUB_OUTPUT
+              ;;
+            "2017 Only")
+              echo 'years=["2017"]' >> $GITHUB_OUTPUT
               ;;
             "2018 Only")
               echo 'years=["2018"]' >> $GITHUB_OUTPUT
