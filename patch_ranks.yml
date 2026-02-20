@@ -1,0 +1,62 @@
+name: Patch Missing Ranks
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Year to patch (or "all" for 2015-2019)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - '2015'
+          - '2016'
+          - '2017'
+          - '2018'
+          - '2019'
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        playwright install chromium
+        playwright install-deps
+
+    - name: Run Patch Script
+      run: |
+        if [ "${{ github.event.inputs.year }}" = "all" ]; then
+          python patch_missing_ranks.py
+        else
+          python patch_missing_ranks.py --year ${{ github.event.inputs.year }}
+        fi
+
+    - name: Upload Patch CSV
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Patch_Output
+        path: |
+          output/patch_*.csv
+          output/patch_*.json
+        retention-days: 90
+
+    - name: Upload Diagnostic HTML
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Patch_Diagnostics
+        path: diagnostic_html/patch_*.html
+        if-no-files-found: ignore
+        retention-days: 30
