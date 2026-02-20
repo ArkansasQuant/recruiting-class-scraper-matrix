@@ -8,6 +8,15 @@ OPTIMIZATIONS:
 - Incremental CSV saves (no data loss on timeout)
 - Resume capability (can continue from player #X)
 - No debug logging (maximum speed)
+
+FIXES (v2):
+- Load More loop uses continue instead of break on errors
+- Consecutive failure counter (10 in a row before stopping)
+- Post-loop verification that Load More is truly gone
+- Triple-check before declaring list complete (race condition fix)
+- Expected total capture for validation
+- Dual-selector link extraction
+- URL normalization to prevent duplicate scrapes
 """
 
 import asyncio
@@ -73,6 +82,16 @@ def normalize_height(height_str: str) -> str:
     
     return height_str
 
+def normalize_player_url(url: str) -> str:
+    """
+    Normalize 247Sports player URLs to prevent duplicate scrapes.
+    Strips /college-XXXXX/ or other suffixes — keeps base player path only.
+    """
+    match = re.match(r'(https://247sports\.com/player/[^/]+/)', url)
+    if match:
+        return match.group(1)
+    return url
+
 def parse_rank(text: str) -> str:
     if not text: return "NA"
     match = re.search(r'#?(\d+)', text)
@@ -117,7 +136,7 @@ def append_to_csv(filename: Path, players: list):
         writer.writerows(players)
 
 # =============================================================================
-# LOAD MORE FUNCTIONALITY
+# LOAD MORE FUNCTIONALITY — IMPROVED
 # =============================================================================
 
 async def click_load_more_until_complete(browser, year: int) -> list:
@@ -155,8 +174,35 @@ async def click_load_more_until_complete(browser, year: int) -> list:
         await context.close()
         return []
 
+    # 🔧 FIX: Capture expected total from page header for validation
+    expected_total = None
+    try:
+        for hdr_selector in [
+            ".rankings-page__header .total",
+            ".result-count",
+            ".rankings-page__header",
+            "h1",
+        ]:
+            try:
+                el = page.locator(hdr_selector).first
+                if await el.count() > 0:
+                    text = await el.text_content()
+                    match = re.search(r'(\d{3,})', text)  # 3+ digit number
+                    if match:
+                        expected_total = int(match.group(1))
+                        print(f"  📊 Page reports {expected_total} total players")
+                        break
+            except:
+                continue
+        if expected_total is None:
+            print(f"  ⚠️ Could not determine expected player count from page")
+    except:
+        pass
+
     click_count = 0
-    max_clicks = 500 if not TEST_MODE else 20  # 20 clicks loads ~300-400 players
+    max_clicks = 500 if not TEST_MODE else 20
+    consecutive_failures = 0  # 🔧 FIX: track consecutive errors
+    no_button_checks = 0      # 🔧 FIX: require multiple checks before declaring done
     
     while click_count < max_clicks:
         current_players = await page.locator(valid_selector).count()
@@ -164,22 +210,75 @@ async def click_load_more_until_complete(browser, year: int) -> list:
         
         try:
             if await load_more_button.count() > 0 and await load_more_button.first.is_visible():
-                print(f"  → Click #{click_count + 1}: {current_players} players loaded...")
                 await load_more_button.first.click()
-                await page.wait_for_timeout(1500)
                 click_count += 1
+                consecutive_failures = 0  # 🔧 FIX: reset on success
+                no_button_checks = 0
+                await page.wait_for_timeout(1500)
+                
+                # Progress logging every 25 clicks
+                if click_count % 25 == 0:
+                    current_count = await page.locator(valid_selector).count()
+                    print(f"  → Click #{click_count}: {current_count} players loaded...")
             else:
-                print(f"  ✓ All players loaded!")
+                await page.wait_for_timeout(2000)
+                no_button_checks += 1
+                
+                # 🔧 FIX: require 3 consecutive "no button" checks before declaring done
+                # Prevents premature exit when button temporarily disappears during content load
+                if no_button_checks >= 3:
+                    final_count = await page.locator(valid_selector).count()
+                    print(f"  ✓ All players loaded! ({final_count} players, {click_count} clicks)")
+                    break
+                    
+        except Exception as e:
+            consecutive_failures += 1  # 🔧 FIX: count consecutive failures
+            print(f"  ⚠️ Load More error ({consecutive_failures}/10): {e}")
+            await page.wait_for_timeout(3000)
+            
+            # 🔧 FIX: only stop after 10 CONSECUTIVE failures, not 1
+            if consecutive_failures >= 10:
+                final_count = await page.locator(valid_selector).count()
+                print(f"  ❌ Too many consecutive failures after {click_count} clicks ({final_count} players loaded)")
                 break
-        except Exception:
-            print(f"  ✓ Load complete")
-            break
+            continue  # 🔧 FIX: was `break` — CRITICAL CHANGE
     
+    # 🔧 FIX: Post-loop verification — make sure Load More is truly gone
+    await page.wait_for_timeout(3000)
+    try:
+        final_check = page.locator('a.load-more, button.load-more, a.rankings-page__showmore, a:has-text("Load More")')
+        if await final_check.count() > 0 and await final_check.first.is_visible():
+            print(f"  ⚠️ Load More still visible after loop! Running cleanup...")
+            for _ in range(50):
+                try:
+                    if await final_check.count() > 0 and await final_check.first.is_visible():
+                        await final_check.first.click()
+                        await page.wait_for_timeout(2000)
+                    else:
+                        break
+                except:
+                    continue
+            cleanup_count = await page.locator(valid_selector).count()
+            print(f"  ✓ Cleanup complete ({cleanup_count} players)")
+    except:
+        pass
+    
+    # ---------------------------------------------------------------
+    # EXTRACT PLAYER LINKS — IMPROVED
+    # ---------------------------------------------------------------
     print(f"\n🔗 Extracting player profile URLs...")
+    
+    # 🔧 FIX: Use multiple selectors for robustness
     player_links = await page.locator(f'{valid_selector} a.rankings-page__name-link, {valid_selector} a.recruit').all()
     
     if not player_links:
-         player_links = await page.locator(f'{valid_selector} a[href*="/player/"]').all()
+        player_links = await page.locator(f'{valid_selector} a[href*="/player/"]').all()
+
+    # Backup: broad selector via JS
+    backup_links = await page.eval_on_selector_all(
+        "a[href*='/player/']",
+        "elements => elements.map(e => e.href)"
+    )
 
     player_urls = []
     for link in player_links:
@@ -188,8 +287,25 @@ async def click_load_more_until_complete(browser, year: int) -> list:
             if href.startswith('/'): href = f"https://247sports.com{href}"
             player_urls.append(href)
     
-    player_urls = list(dict.fromkeys(player_urls))
-    print(f"  ✓ Found {len(player_urls)} player profiles")
+    # Add any from backup that weren't in primary
+    for href in backup_links:
+        if href and '/player/' in href and '247sports.com' in href:
+            player_urls.append(href)
+    
+    # 🔧 FIX: Normalize URLs before deduplicating (strips /college-XXXXX/ suffix etc.)
+    player_urls = list(dict.fromkeys(normalize_player_url(u) for u in player_urls))
+    
+    print(f"  ✓ Found {len(player_urls)} unique player profiles")
+    
+    # 🔧 FIX: Validate against expected total
+    if expected_total and not TEST_MODE:
+        coverage = len(player_urls) / expected_total * 100
+        if coverage >= 95:
+            print(f"  ✅ Coverage: {coverage:.1f}% ({len(player_urls)}/{expected_total})")
+        elif coverage >= 80:
+            print(f"  ⚠️ Coverage: {coverage:.1f}% ({len(player_urls)}/{expected_total}) — some players may be missing")
+        else:
+            print(f"  ❌ Coverage: {coverage:.1f}% ({len(player_urls)}/{expected_total}) — SIGNIFICANT DATA LOSS")
     
     if TEST_MODE and len(player_urls) > 300:
         player_urls = player_urls[:300]
@@ -557,7 +673,7 @@ async def scrape_year(browser, year: int) -> list:
 
 async def main():
     print("\n" + "="*80)
-    print("🏈 247SPORTS RECRUITING CLASS SCRAPER - PRODUCTION")
+    print("🏈 247SPORTS RECRUITING CLASS SCRAPER - PRODUCTION v2")
     print("="*80)
     print(f"📅 Years: {YEARS}")
     print(f"🧪 Test Mode: {TEST_MODE}")
