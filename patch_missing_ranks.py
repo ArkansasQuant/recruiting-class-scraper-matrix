@@ -121,11 +121,18 @@ async def get_players_from_list(browser, year: int, max_rank_needed: int) -> dic
     context = await browser.new_context(user_agent=USER_AGENT)
     page = await context.new_page()
     
+    # Block ad/overlay scripts that intercept clicks
+    await page.route("**/*bouncex*", lambda route: route.abort())
+    await page.route("**/*bounceexchange*", lambda route: route.abort())
+    await page.route("**/*integralas*", lambda route: route.abort())
+    
     url = f"https://247sports.com/season/{year}-football/compositerecruitrankings/"
     
     try:
         await page.goto(url, wait_until='domcontentloaded', timeout=60000)
         await page.wait_for_timeout(3000)
+        # Dismiss any overlays that loaded
+        await page.evaluate("document.querySelectorAll('[id^=\"bx-campaign\"], .bxc, .IL_BASE, [id=\"IL_INSEARCH\"], [id=\"d_IL_INSEARCH\"]').forEach(el => el.remove())")
     except Exception as e:
         print(f"  ❌ Failed to load page: {e}")
         await context.close()
@@ -142,10 +149,24 @@ async def get_players_from_list(browser, year: int, max_rank_needed: int) -> dic
     
     for i in range(clicks_needed + 20):  # Extra safety margin
         try:
+            # Dismiss overlays before each click attempt
+            await page.evaluate("document.querySelectorAll('[id^=\"bx-campaign\"], .bxc, .IL_BASE, [id=\"IL_INSEARCH\"], [id=\"d_IL_INSEARCH\"]').forEach(el => el.remove())")
+            
             load_more = page.locator('a.load-more, button.load-more, a.rankings-page__showmore, a:has-text("Load More")')
             
             if await load_more.count() > 0 and await load_more.first.is_visible():
-                await load_more.first.click()
+                try:
+                    await load_more.first.click(timeout=5000)
+                except Exception:
+                    # Fallback to JS click if overlay respawns
+                    await page.evaluate("""
+                        () => {
+                            const btn = document.querySelector('.rankings-page__showmore') 
+                                || document.querySelector('a.load-more')
+                                || [...document.querySelectorAll('a, button')].find(b => b.textContent.includes('Load More'));
+                            if (btn) btn.click();
+                        }
+                    """)
                 click_count += 1
                 consecutive_failures = 0
                 no_button_checks = 0
@@ -236,6 +257,34 @@ async def parse_profile(page, url: str, year: int) -> dict:
                 await recruiting_link.first.click()
                 await page.wait_for_load_state('domcontentloaded', timeout=30000)
                 await page.wait_for_timeout(1000)
+        except:
+            pass
+        
+        # FIX: If we landed on a JUCO/NCAA page, navigate to the (HS) profile
+        # These players have JUCO rankings showing instead of HS rankings
+        try:
+            current_url = page.url
+            if 'junior-college' in current_url or 'college-' in current_url:
+                hs_link = page.locator('a:has-text("(HS)")')
+                if await hs_link.count() == 0:
+                    hs_link = page.locator('a:has-text("(HS -")')  # handles (HS - FB), (HS - BK)
+                if await hs_link.count() > 0:
+                    await hs_link.first.click()
+                    await page.wait_for_load_state('domcontentloaded', timeout=30000)
+                    await page.wait_for_timeout(1000)
+                    print(f"      → Navigated from JUCO/NCAA to HS profile")
+            else:
+                # Even if URL doesn't say JUCO, check if ranking headers say JUCO
+                page_text = await page.content()
+                if '247SportsJUCO' in page_text and 'InstitutionGroup=HighSchool' not in page_text:
+                    hs_link = page.locator('a:has-text("(HS)")')
+                    if await hs_link.count() == 0:
+                        hs_link = page.locator('a:has-text("(HS -")')
+                    if await hs_link.count() > 0:
+                        await hs_link.first.click()
+                        await page.wait_for_load_state('domcontentloaded', timeout=30000)
+                        await page.wait_for_timeout(1000)
+                        print(f"      → Navigated from JUCO rankings to HS profile")
         except:
             pass
         
