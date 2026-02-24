@@ -147,7 +147,7 @@ async def get_players_from_list(browser, year: int, max_rank_needed: int) -> dic
     
     print(f"  Clicking Load More (~{clicks_needed} clicks needed)...")
     
-    for i in range(clicks_needed + 20):  # Extra safety margin
+    for i in range(clicks_needed + 5):  # Small safety margin
         try:
             # Dismiss overlays before each click attempt
             await page.evaluate("document.querySelectorAll('[id^=\"bx-campaign\"], .bxc, .IL_BASE, [id=\"IL_INSEARCH\"], [id=\"d_IL_INSEARCH\"]').forEach(el => el.remove())")
@@ -175,6 +175,10 @@ async def get_players_from_list(browser, year: int, max_rank_needed: int) -> dic
                 if click_count % 5 == 0:
                     items = await page.locator("li.rankings-page__list-item").count()
                     print(f"    Click #{click_count}: {items} players loaded")
+                    # Early exit: stop once we have enough players
+                    if items > max_rank_needed + 50:
+                        print(f"  ✓ Enough players loaded for rank {max_rank_needed}")
+                        break
             else:
                 await page.wait_for_timeout(2000)
                 no_button_checks += 1
