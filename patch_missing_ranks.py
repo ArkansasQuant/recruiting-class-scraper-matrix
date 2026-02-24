@@ -264,31 +264,17 @@ async def parse_profile(page, url: str, year: int) -> dict:
         except:
             pass
         
-        # FIX: If we landed on a JUCO/NCAA page, navigate to the (HS) profile
-        # These players have JUCO rankings showing instead of HS rankings
+        # FIX: If page has an (HS) link, we're on a JUCO/NCAA profile — navigate to HS
+        # HS profiles don't have this link, so this is always safe to check
         try:
-            current_url = page.url
-            if 'junior-college' in current_url or 'college-' in current_url:
-                hs_link = page.locator('a:has-text("(HS)")')
-                if await hs_link.count() == 0:
-                    hs_link = page.locator('a:has-text("(HS -")')  # handles (HS - FB), (HS - BK)
-                if await hs_link.count() > 0:
-                    await hs_link.first.click()
-                    await page.wait_for_load_state('domcontentloaded', timeout=30000)
-                    await page.wait_for_timeout(1000)
-                    print(f"      → Navigated from JUCO/NCAA to HS profile")
-            else:
-                # Even if URL doesn't say JUCO, check if ranking headers say JUCO
-                page_text = await page.content()
-                if '247SportsJUCO' in page_text and 'InstitutionGroup=HighSchool' not in page_text:
-                    hs_link = page.locator('a:has-text("(HS)")')
-                    if await hs_link.count() == 0:
-                        hs_link = page.locator('a:has-text("(HS -")')
-                    if await hs_link.count() > 0:
-                        await hs_link.first.click()
-                        await page.wait_for_load_state('domcontentloaded', timeout=30000)
-                        await page.wait_for_timeout(1000)
-                        print(f"      → Navigated from JUCO rankings to HS profile")
+            hs_link = page.locator('a:has-text("(HS)")')
+            if await hs_link.count() == 0:
+                hs_link = page.locator('a:has-text("(HS -")')  # handles (HS - FB), (HS - BK)
+            if await hs_link.count() > 0:
+                await hs_link.first.click()
+                await page.wait_for_load_state('domcontentloaded', timeout=30000)
+                await page.wait_for_timeout(1000)
+                print(f"      → Navigated to HS profile")
         except:
             pass
         
