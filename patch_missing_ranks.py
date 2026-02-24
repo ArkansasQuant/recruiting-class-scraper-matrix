@@ -267,12 +267,15 @@ async def parse_profile(page, url: str, year: int) -> dict:
         # FIX: If page has an (HS) link, we're on a JUCO/NCAA profile — navigate to HS
         # HS profiles don't have this link, so this is always safe to check
         try:
-            hs_link = page.locator('a:has-text("(HS)")')
-            if await hs_link.count() == 0:
-                hs_link = page.locator('a:has-text("(HS -")')  # handles (HS - FB), (HS - BK)
-            if await hs_link.count() > 0:
-                await hs_link.first.click()
-                await page.wait_for_load_state('domcontentloaded', timeout=30000)
+            hs_href = await page.evaluate("""
+                () => {
+                    const links = [...document.querySelectorAll('a')];
+                    const hs = links.find(a => a.textContent.includes('(HS)'));
+                    return hs ? hs.href : null;
+                }
+            """)
+            if hs_href:
+                await page.goto(hs_href, wait_until='domcontentloaded', timeout=30000)
                 await page.wait_for_timeout(1000)
                 print(f"      → Navigated to HS profile")
         except:
