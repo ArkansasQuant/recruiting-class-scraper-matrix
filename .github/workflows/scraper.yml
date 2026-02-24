@@ -166,7 +166,7 @@ jobs:
         year: ${{ fromJson(needs.setup.outputs.years) }}
       fail-fast: false  # Don't cancel other years if one fails
     
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 360
     
     name: Scrape ${{ matrix.year }}
@@ -222,7 +222,7 @@ jobs:
   # Job 3: Combine all CSVs into one
   combine:
     needs: scrape
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: always()
     
     steps:
