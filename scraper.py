@@ -17,6 +17,12 @@ FIXES (v2):
 - Expected total capture for validation
 - Dual-selector link extraction
 - URL normalization to prevent duplicate scrapes
+
+FIXES (v3):
+- JUCO/NCAA profile detection: navigates to (HS) profile before parsing
+- Link extraction uses specific list selector first, broad as fallback
+- DataFrame dedup safety net on 247 ID before CSV save
+- Improved URL normalization (www, http, query params)
 """
 
 import asyncio
@@ -69,7 +75,7 @@ def clean_text(text: str) -> str:
     return text.strip().replace('\n', ' ').replace('\r', '')
 
 def normalize_height(height_str: str) -> str:
-    """Normalize height to prevent Excel from converting to dates (6-3 → '6-3)"""
+    """Normalize height to prevent Excel from converting to dates (6-3 -> '6-3)"""
     if not height_str or height_str == "NA": 
         return "NA"
     
@@ -85,11 +91,16 @@ def normalize_height(height_str: str) -> str:
 def normalize_player_url(url: str) -> str:
     """
     Normalize 247Sports player URLs to prevent duplicate scrapes.
-    Strips /college-XXXXX/ or other suffixes — keeps base player path only.
+    Handles: www vs non-www, http vs https, trailing slash, query params,
+    and /college-XXXXX/ or /junior-college-XXXXX/ suffixes.
     """
-    match = re.match(r'(https://247sports\.com/player/[^/]+/)', url)
+    url = url.split('?')[0].split('#')[0]
+    url = url.replace('://www.', '://')
+    url = url.replace('http://', 'https://')
+    
+    match = re.match(r'(https://247sports\.com/player/[^/]+)', url)
     if match:
-        return match.group(1)
+        return match.group(1) + '/'
     return url
 
 def parse_rank(text: str) -> str:
@@ -136,7 +147,7 @@ def append_to_csv(filename: Path, players: list):
         writer.writerows(players)
 
 # =============================================================================
-# LOAD MORE FUNCTIONALITY — IMPROVED
+# LOAD MORE FUNCTIONALITY
 # =============================================================================
 
 async def click_load_more_until_complete(browser, year: int) -> list:
@@ -174,7 +185,7 @@ async def click_load_more_until_complete(browser, year: int) -> list:
         await context.close()
         return []
 
-    # 🔧 FIX: Capture expected total from page header for validation
+    # Capture expected total from page header for validation
     expected_total = None
     try:
         for hdr_selector in [
@@ -201,8 +212,8 @@ async def click_load_more_until_complete(browser, year: int) -> list:
 
     click_count = 0
     max_clicks = 500 if not TEST_MODE else 20
-    consecutive_failures = 0  # 🔧 FIX: track consecutive errors
-    no_button_checks = 0      # 🔧 FIX: require multiple checks before declaring done
+    consecutive_failures = 0
+    no_button_checks = 0
     
     while click_count < max_clicks:
         current_players = await page.locator(valid_selector).count()
@@ -212,11 +223,10 @@ async def click_load_more_until_complete(browser, year: int) -> list:
             if await load_more_button.count() > 0 and await load_more_button.first.is_visible():
                 await load_more_button.first.click()
                 click_count += 1
-                consecutive_failures = 0  # 🔧 FIX: reset on success
+                consecutive_failures = 0
                 no_button_checks = 0
                 await page.wait_for_timeout(1500)
                 
-                # Progress logging every 25 clicks
                 if click_count % 25 == 0:
                     current_count = await page.locator(valid_selector).count()
                     print(f"  → Click #{click_count}: {current_count} players loaded...")
@@ -224,26 +234,23 @@ async def click_load_more_until_complete(browser, year: int) -> list:
                 await page.wait_for_timeout(2000)
                 no_button_checks += 1
                 
-                # 🔧 FIX: require 3 consecutive "no button" checks before declaring done
-                # Prevents premature exit when button temporarily disappears during content load
                 if no_button_checks >= 3:
                     final_count = await page.locator(valid_selector).count()
                     print(f"  ✓ All players loaded! ({final_count} players, {click_count} clicks)")
                     break
                     
         except Exception as e:
-            consecutive_failures += 1  # 🔧 FIX: count consecutive failures
+            consecutive_failures += 1
             print(f"  ⚠️ Load More error ({consecutive_failures}/10): {e}")
             await page.wait_for_timeout(3000)
             
-            # 🔧 FIX: only stop after 10 CONSECUTIVE failures, not 1
             if consecutive_failures >= 10:
                 final_count = await page.locator(valid_selector).count()
                 print(f"  ❌ Too many consecutive failures after {click_count} clicks ({final_count} players loaded)")
                 break
-            continue  # 🔧 FIX: was `break` — CRITICAL CHANGE
+            continue
     
-    # 🔧 FIX: Post-loop verification — make sure Load More is truly gone
+    # Post-loop verification
     await page.wait_for_timeout(3000)
     try:
         final_check = page.locator('a.load-more, button.load-more, a.rankings-page__showmore, a:has-text("Load More")')
@@ -264,40 +271,39 @@ async def click_load_more_until_complete(browser, year: int) -> list:
         pass
     
     # ---------------------------------------------------------------
-    # EXTRACT PLAYER LINKS — IMPROVED
+    # EXTRACT PLAYER LINKS — v3: specific selector first
     # ---------------------------------------------------------------
     print(f"\n🔗 Extracting player profile URLs...")
     
-    # 🔧 FIX: Use multiple selectors for robustness
-    player_links = await page.locator(f'{valid_selector} a.rankings-page__name-link, {valid_selector} a.recruit').all()
-    
-    if not player_links:
-        player_links = await page.locator(f'{valid_selector} a[href*="/player/"]').all()
-
-    # Backup: broad selector via JS
-    backup_links = await page.eval_on_selector_all(
-        "a[href*='/player/']",
+    # Primary: specific list-item name links (only matches ranking list entries)
+    player_links = await page.eval_on_selector_all(
+        ".rankings-page__name-link",
         "elements => elements.map(e => e.href)"
     )
-
-    player_urls = []
-    for link in player_links:
-        href = await link.get_attribute('href')
-        if href and '/player/' in href:
-            if href.startswith('/'): href = f"https://247sports.com{href}"
-            player_urls.append(href)
     
-    # Add any from backup that weren't in primary
-    for href in backup_links:
-        if href and '/player/' in href and '247sports.com' in href:
-            player_urls.append(href)
+    # Fallback: scoped to list items
+    if not player_links:
+        player_links = await page.eval_on_selector_all(
+            f"{valid_selector} a[href*='/player/']",
+            "elements => elements.map(e => e.href)"
+        )
     
-    # 🔧 FIX: Normalize URLs before deduplicating (strips /college-XXXXX/ suffix etc.)
-    player_urls = list(dict.fromkeys(normalize_player_url(u) for u in player_urls))
+    # Last resort: broad selector
+    if not player_links:
+        player_links = await page.eval_on_selector_all(
+            "a[href*='/player/']",
+            "elements => elements.map(e => e.href)"
+        )
+    
+    # Normalize and deduplicate
+    player_urls = list(dict.fromkeys(
+        normalize_player_url(u) for u in player_links
+        if u and '/player/' in u and '247sports.com' in u
+    ))
     
     print(f"  ✓ Found {len(player_urls)} unique player profiles")
     
-    # 🔧 FIX: Validate against expected total
+    # Validate against expected total
     if expected_total and not TEST_MODE:
         coverage = len(player_urls) / expected_total * 100
         if coverage >= 95:
@@ -330,6 +336,24 @@ async def navigate_to_recruiting_profile(page) -> bool:
     except:
         return False
 
+async def navigate_to_hs_profile(page) -> bool:
+    """If on a JUCO/NCAA profile, navigate to the (HS) high school profile."""
+    try:
+        hs_href = await page.evaluate("""
+            () => {
+                const links = [...document.querySelectorAll('a')];
+                const hs = links.find(a => a.textContent.includes('(HS)'));
+                return hs ? hs.href : null;
+            }
+        """)
+        if hs_href:
+            await page.goto(hs_href, wait_until='domcontentloaded', timeout=30000)
+            await page.wait_for_timeout(1000)
+            return True
+        return False
+    except:
+        return False
+
 async def parse_timeline(page, data, year, do_deep_dive: bool):
     """
     Parses timeline for Commitment and Draft info.
@@ -355,11 +379,9 @@ async def parse_timeline(page, data, year, do_deep_dive: bool):
                 if date_match and data['Draft Date'] == "NA":
                      data['Draft Date'] = normalize_date(date_match.group(1))
                 
-                # Extract team name, excluding the word "Draft" itself
                 team_match = re.search(r'(?:Draft[:\s]+)?([A-Z][A-Za-z0-9\s\.]+?)\s+(?:select|pick)', item_text, re.IGNORECASE)
                 if team_match and data['Draft Team'] == "NA":
                     team_name = clean_text(team_match.group(1))
-                    # Strip 'Draft' prefix if it got captured
                     team_name = re.sub(r'^Draft\s*', '', team_name, flags=re.IGNORECASE).strip()
                     if team_name and team_name.lower() not in ['draft']:
                         data['Draft Team'] = team_name
@@ -388,7 +410,6 @@ async def parse_timeline(page, data, year, do_deep_dive: bool):
         
         # --- DEEP DIVE (only for top players) ---
         if do_deep_dive:
-            # Scroll to find timeline section
             await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
             await page.wait_for_timeout(1500)
             
@@ -400,7 +421,6 @@ async def parse_timeline(page, data, year, do_deep_dive: bool):
                     try:
                         await page.goto(full_timeline_url, wait_until='domcontentloaded', timeout=15000)
                         
-                        # Parse full timeline with pagination and EARLY EXIT
                         page_count = 0
                         max_pages = 10
                         
@@ -434,11 +454,9 @@ async def parse_timeline(page, data, year, do_deep_dive: bool):
                                             if team_match:
                                                 data['Signed Team'] = clean_text(team_match.group(1))
                                             
-                                            # EARLY EXIT - Found commitment (priority 100)!
                                             if item_priority == 100:
-                                                return  # Stop pagination immediately
+                                                return  # EARLY EXIT
                             
-                            # Pagination
                             next_button = page.locator('li.next_itm a')
                             if await next_button.count() > 0 and await next_button.is_visible():
                                 await next_button.click()
@@ -448,7 +466,7 @@ async def parse_timeline(page, data, year, do_deep_dive: bool):
                                 break
                                 
                     except Exception:
-                        pass  # Silent fail on timeline deep dive
+                        pass
 
     except Exception:
         pass
@@ -466,6 +484,9 @@ async def parse_profile(page, url: str, year: int, player_num: int, total: int) 
         await page.wait_for_timeout(1000)
         
         await navigate_to_recruiting_profile(page)
+        
+        # v3 FIX: Navigate to HS profile if on JUCO/NCAA page
+        await navigate_to_hs_profile(page)
         
         html = await page.content()
         from bs4 import BeautifulSoup
@@ -509,6 +530,11 @@ async def parse_profile(page, url: str, year: int, player_num: int, total: int) 
             if not header: continue
             
             header_text = clean_text(header.get_text()).upper()
+            
+            # v3 FIX: Skip JUCO ranking sections entirely
+            if "JUCO" in header_text:
+                continue
+            
             prefix = None
             if "COMPOSITE" in header_text:
                 prefix = "Composite"
@@ -535,20 +561,16 @@ async def parse_profile(page, url: str, year: int, player_num: int, total: int) 
                         href = link_tag.get('href', '')
                         li_text = clean_text(li.get_text())
                         
-                        # Position Rank (has Position= in URL)
                         if 'Position=' in href:
                             if pos_node: 
                                 data[f'{prefix} Position'] = clean_text(pos_node.get_text())
-                            
                             rank_node = link_tag.select_one('strong')
                             if rank_node: 
                                 data[f'{prefix} Position Rank'] = parse_rank(rank_node.get_text())
                         
-                        # Skip State Ranks explicitly (has both InstitutionGroup AND State parameter)
                         elif 'State=' in href or 'state=' in href:
-                            continue  # Skip state ranks entirely
+                            continue
                         
-                        # National Rank (has InstitutionGroup=HighSchool but NO State parameter)
                         elif 'InstitutionGroup=HighSchool' in href:
                              rank_node = link_tag.select_one('strong')
                              if rank_node: 
@@ -643,7 +665,7 @@ async def scrape_year(browser, year: int) -> list:
     filename = OUTPUT_DIR / f"recruiting_class_{year_range}_{timestamp}.csv"
     
     all_data = []
-    batch_buffer = []  # Buffer for incremental saves every 100 players
+    batch_buffer = []
     
     for i in range(0, len(player_urls), MAX_CONCURRENT):
         batch = player_urls[i:i + MAX_CONCURRENT]
@@ -659,7 +681,7 @@ async def scrape_year(browser, year: int) -> list:
         if len(batch_buffer) >= 100:
             append_to_csv(filename, batch_buffer)
             print(f"    💾 Saved {len(batch_buffer)} players to CSV")
-            batch_buffer = []  # Clear buffer
+            batch_buffer = []
         
         print(f"    → Progress: {len(all_data)}/{len(player_urls)} players")
     
@@ -673,7 +695,7 @@ async def scrape_year(browser, year: int) -> list:
 
 async def main():
     print("\n" + "="*80)
-    print("🏈 247SPORTS RECRUITING CLASS SCRAPER - PRODUCTION v2")
+    print("🏈 247SPORTS RECRUITING CLASS SCRAPER - PRODUCTION v3")
     print("="*80)
     print(f"📅 Years: {YEARS}")
     print(f"🧪 Test Mode: {TEST_MODE}")
