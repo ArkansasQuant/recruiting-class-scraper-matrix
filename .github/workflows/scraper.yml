@@ -53,7 +53,7 @@ on:
 jobs:
   # Job 1: Determine which years to run based on user selection
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       years: ${{ steps.set-years.outputs.years }}
     steps:
