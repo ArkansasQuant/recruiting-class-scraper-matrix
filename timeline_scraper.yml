@@ -1,0 +1,290 @@
+name: Run Player Timeline Scraper (Multi-Year 2008-2027)
+
+on:
+  workflow_dispatch:
+    inputs:
+      years_to_scrape:
+        description: 'Which years to scrape'
+        required: true
+        type: choice
+        options:
+          - 'All Years (2008-2027)'
+          - 'All Years (2008-2026)'
+          - 'All Years (2015-2027)'
+          - 'All Years (2015-2026)'
+          - 'All Years (2018-2027)'
+          - 'All Years (2020-2026)'
+          - 'Historical (2008-2014)'
+          - 'Historical (2015-2019)'
+          - 'Historical (2018-2019)'
+          - 'Core Years (2020-2022)'
+          - 'Recent Years (2023-2026)'
+          - 'Future Planning (2020-2027)'
+          - '2008 Only'
+          - '2009 Only'
+          - '2010 Only'
+          - '2011 Only'
+          - '2012 Only'
+          - '2013 Only'
+          - '2014 Only'
+          - '2015 Only'
+          - '2016 Only'
+          - '2017 Only'
+          - '2018 Only'
+          - '2019 Only'
+          - '2020 Only'
+          - '2021 Only'
+          - '2022 Only'
+          - '2023 Only'
+          - '2024 Only'
+          - '2025 Only'
+          - '2026 Only'
+          - '2027 Only'
+        default: '2026 Only'
+      test_mode:
+        description: 'Test mode (50 players) or Full scrape'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  # Job 1: Determine which years to run based on user selection
+  setup:
+    runs-on: ubuntu-22.04
+    outputs:
+      years: ${{ steps.set-years.outputs.years }}
+    steps:
+      - id: set-years
+        run: |
+          case "${{ github.event.inputs.years_to_scrape }}" in
+            "All Years (2008-2027)")
+              echo 'years=["2008","2009","2010","2011","2012","2013","2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
+              ;;
+            "All Years (2008-2026)")
+              echo 'years=["2008","2009","2010","2011","2012","2013","2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "All Years (2015-2027)")
+              echo 'years=["2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
+              ;;
+            "All Years (2015-2026)")
+              echo 'years=["2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "All Years (2018-2027)")
+              echo 'years=["2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
+              ;;
+            "All Years (2020-2026)")
+              echo 'years=["2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "Historical (2008-2014)")
+              echo 'years=["2008","2009","2010","2011","2012","2013","2014"]' >> $GITHUB_OUTPUT
+              ;;
+            "Historical (2015-2019)")
+              echo 'years=["2015","2016","2017","2018","2019"]' >> $GITHUB_OUTPUT
+              ;;
+            "Historical (2018-2019)")
+              echo 'years=["2018","2019"]' >> $GITHUB_OUTPUT
+              ;;
+            "Core Years (2020-2022)")
+              echo 'years=["2020","2021","2022"]' >> $GITHUB_OUTPUT
+              ;;
+            "Recent Years (2023-2026)")
+              echo 'years=["2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "Future Planning (2020-2027)")
+              echo 'years=["2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
+              ;;
+            "2008 Only")
+              echo 'years=["2008"]' >> $GITHUB_OUTPUT
+              ;;
+            "2009 Only")
+              echo 'years=["2009"]' >> $GITHUB_OUTPUT
+              ;;
+            "2010 Only")
+              echo 'years=["2010"]' >> $GITHUB_OUTPUT
+              ;;
+            "2011 Only")
+              echo 'years=["2011"]' >> $GITHUB_OUTPUT
+              ;;
+            "2012 Only")
+              echo 'years=["2012"]' >> $GITHUB_OUTPUT
+              ;;
+            "2013 Only")
+              echo 'years=["2013"]' >> $GITHUB_OUTPUT
+              ;;
+            "2014 Only")
+              echo 'years=["2014"]' >> $GITHUB_OUTPUT
+              ;;
+            "2015 Only")
+              echo 'years=["2015"]' >> $GITHUB_OUTPUT
+              ;;
+            "2016 Only")
+              echo 'years=["2016"]' >> $GITHUB_OUTPUT
+              ;;
+            "2017 Only")
+              echo 'years=["2017"]' >> $GITHUB_OUTPUT
+              ;;
+            "2018 Only")
+              echo 'years=["2018"]' >> $GITHUB_OUTPUT
+              ;;
+            "2019 Only")
+              echo 'years=["2019"]' >> $GITHUB_OUTPUT
+              ;;
+            "2020 Only")
+              echo 'years=["2020"]' >> $GITHUB_OUTPUT
+              ;;
+            "2021 Only")
+              echo 'years=["2021"]' >> $GITHUB_OUTPUT
+              ;;
+            "2022 Only")
+              echo 'years=["2022"]' >> $GITHUB_OUTPUT
+              ;;
+            "2023 Only")
+              echo 'years=["2023"]' >> $GITHUB_OUTPUT
+              ;;
+            "2024 Only")
+              echo 'years=["2024"]' >> $GITHUB_OUTPUT
+              ;;
+            "2025 Only")
+              echo 'years=["2025"]' >> $GITHUB_OUTPUT
+              ;;
+            "2026 Only")
+              echo 'years=["2026"]' >> $GITHUB_OUTPUT
+              ;;
+            "2027 Only")
+              echo 'years=["2027"]' >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+  # Job 2: Scrape timelines for selected years in parallel
+  scrape:
+    needs: setup
+    strategy:
+      matrix:
+        year: ${{ fromJson(needs.setup.outputs.years) }}
+      fail-fast: false
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    name: Timeline ${{ matrix.year }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        playwright install --with-deps chromium
+
+    - name: Run timeline scraper for ${{ matrix.year }}
+      run: python timeline_scraper.py
+      env:
+        TEST_MODE: ${{ github.event.inputs.test_mode }}
+        SCRAPE_YEAR: ${{ matrix.year }}
+
+    - name: Upload CSV for combination
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: timeline_for_combine_${{ matrix.year }}
+        path: output/*.csv
+        retention-days: 7
+
+    - name: Upload individual timeline CSV for ${{ matrix.year }}
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Timeline_Output_${{ matrix.year }}
+        path: output/*.csv
+        retention-days: 90
+
+  # Job 3: Combine all timeline CSVs into one
+  combine:
+    needs: scrape
+    runs-on: ubuntu-22.04
+    if: always()
+    steps:
+    - name: Download all CSV artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: timeline_for_combine_*
+        path: downloaded_csvs
+        merge-multiple: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install pandas
+      run: pip install pandas
+
+    - name: Combine CSVs
+      run: |
+        python3 << 'EOF'
+        import pandas as pd
+        import glob
+        import os
+        from datetime import datetime
+
+        csv_files = glob.glob('downloaded_csvs/*.csv')
+        if not csv_files:
+            print("⚠️  No CSV files found to combine")
+            exit(0)
+
+        print(f"📊 Found {len(csv_files)} CSV files to combine")
+        dfs = []
+        for file in sorted(csv_files):
+            print(f"  → Reading {os.path.basename(file)}")
+            dfs.append(pd.read_csv(file))
+
+        combined = pd.concat(dfs, ignore_index=True)
+
+        # Sort by class year (desc), then player, then event date (asc)
+        combined['High School Class'] = pd.to_numeric(combined['High School Class'], errors='coerce')
+        combined['__d'] = pd.to_datetime(combined['Event Date'], format='%m/%d/%Y', errors='coerce')
+        combined = combined.sort_values(
+            by=['High School Class', 'Player Name', '__d'],
+            ascending=[False, True, True]
+        ).drop(columns='__d')
+
+        years = sorted(combined['High School Class'].dropna().unique().astype(int))
+        year_range = f"{min(years)}-{max(years)}" if len(years) > 1 else str(years[0])
+        timestamp = datetime.now().strftime('%Y%m%d')
+        output_file = f'player_timeline_{year_range}_combined_{timestamp}.csv'
+        combined.to_csv(output_file, index=False)
+
+        print(f"\n✅ Combined CSV created: {output_file}")
+        print(f"📊 Total event rows: {len(combined):,}")
+        print(f"👤 Unique players: {combined['247 ID'].nunique():,}")
+        print(f"📅 Years covered: {year_range}")
+        print(f"📏 File size: {os.path.getsize(output_file)/1024/1024:.2f} MB")
+        EOF
+
+    - name: Upload combined timeline CSV
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Combined_Timeline_All_Years
+        path: player_timeline_*_combined_*.csv
+        retention-days: 90
+
+    - name: Display summary
+      if: always()
+      run: |
+        echo "=========================================="
+        echo "🎉 TIMELINE SCRAPING COMPLETE!"
+        echo "=========================================="
+        echo ""
+        echo "📦 Artifacts created:"
+        echo "  • Combined_Timeline_All_Years (single long-format file)"
+        echo "  • Timeline_Output_YEAR (individual files per year)"
+        echo ""
+        echo "Each row = one timeline event. Pivot in Excel by Event Type / Event Team."
+        echo "=========================================="
