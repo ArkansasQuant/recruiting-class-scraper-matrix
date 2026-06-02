@@ -4,43 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       years_to_scrape:
-        description: 'Which years to scrape'
+        description: 'Years: ranges (2021-2024), lists (2023, 2024, 2008), or mixed (2008, 2015-2017, 2024)'
         required: true
-        type: choice
-        options:
-          - 'All Years (2008-2027)'
-          - 'All Years (2008-2026)'
-          - 'All Years (2015-2027)'
-          - 'All Years (2015-2026)'
-          - 'All Years (2018-2027)'
-          - 'All Years (2020-2026)'
-          - 'Historical (2008-2014)'
-          - 'Historical (2015-2019)'
-          - 'Historical (2018-2019)'
-          - 'Core Years (2020-2022)'
-          - 'Recent Years (2023-2026)'
-          - 'Future Planning (2020-2027)'
-          - '2008 Only'
-          - '2009 Only'
-          - '2010 Only'
-          - '2011 Only'
-          - '2012 Only'
-          - '2013 Only'
-          - '2014 Only'
-          - '2015 Only'
-          - '2016 Only'
-          - '2017 Only'
-          - '2018 Only'
-          - '2019 Only'
-          - '2020 Only'
-          - '2021 Only'
-          - '2022 Only'
-          - '2023 Only'
-          - '2024 Only'
-          - '2025 Only'
-          - '2026 Only'
-          - '2027 Only'
-        default: '2026 Only'
+        type: string
+        default: '2024'
       test_mode:
         description: 'Test mode (50 players) or Full scrape'
         required: false
@@ -58,105 +25,46 @@ jobs:
       years: ${{ steps.set-years.outputs.years }}
     steps:
       - id: set-years
+        shell: python
         run: |
-          case "${{ github.event.inputs.years_to_scrape }}" in
-            "All Years (2008-2027)")
-              echo 'years=["2008","2009","2010","2011","2012","2013","2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
-              ;;
-            "All Years (2008-2026)")
-              echo 'years=["2008","2009","2010","2011","2012","2013","2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
-              ;;
-            "All Years (2015-2027)")
-              echo 'years=["2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
-              ;;
-            "All Years (2015-2026)")
-              echo 'years=["2015","2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
-              ;;
-            "All Years (2018-2027)")
-              echo 'years=["2018","2019","2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
-              ;;
-            "All Years (2020-2026)")
-              echo 'years=["2020","2021","2022","2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
-              ;;
-            "Historical (2008-2014)")
-              echo 'years=["2008","2009","2010","2011","2012","2013","2014"]' >> $GITHUB_OUTPUT
-              ;;
-            "Historical (2015-2019)")
-              echo 'years=["2015","2016","2017","2018","2019"]' >> $GITHUB_OUTPUT
-              ;;
-            "Historical (2018-2019)")
-              echo 'years=["2018","2019"]' >> $GITHUB_OUTPUT
-              ;;
-            "Core Years (2020-2022)")
-              echo 'years=["2020","2021","2022"]' >> $GITHUB_OUTPUT
-              ;;
-            "Recent Years (2023-2026)")
-              echo 'years=["2023","2024","2025","2026"]' >> $GITHUB_OUTPUT
-              ;;
-            "Future Planning (2020-2027)")
-              echo 'years=["2020","2021","2022","2023","2024","2025","2026","2027"]' >> $GITHUB_OUTPUT
-              ;;
-            "2008 Only")
-              echo 'years=["2008"]' >> $GITHUB_OUTPUT
-              ;;
-            "2009 Only")
-              echo 'years=["2009"]' >> $GITHUB_OUTPUT
-              ;;
-            "2010 Only")
-              echo 'years=["2010"]' >> $GITHUB_OUTPUT
-              ;;
-            "2011 Only")
-              echo 'years=["2011"]' >> $GITHUB_OUTPUT
-              ;;
-            "2012 Only")
-              echo 'years=["2012"]' >> $GITHUB_OUTPUT
-              ;;
-            "2013 Only")
-              echo 'years=["2013"]' >> $GITHUB_OUTPUT
-              ;;
-            "2014 Only")
-              echo 'years=["2014"]' >> $GITHUB_OUTPUT
-              ;;
-            "2015 Only")
-              echo 'years=["2015"]' >> $GITHUB_OUTPUT
-              ;;
-            "2016 Only")
-              echo 'years=["2016"]' >> $GITHUB_OUTPUT
-              ;;
-            "2017 Only")
-              echo 'years=["2017"]' >> $GITHUB_OUTPUT
-              ;;
-            "2018 Only")
-              echo 'years=["2018"]' >> $GITHUB_OUTPUT
-              ;;
-            "2019 Only")
-              echo 'years=["2019"]' >> $GITHUB_OUTPUT
-              ;;
-            "2020 Only")
-              echo 'years=["2020"]' >> $GITHUB_OUTPUT
-              ;;
-            "2021 Only")
-              echo 'years=["2021"]' >> $GITHUB_OUTPUT
-              ;;
-            "2022 Only")
-              echo 'years=["2022"]' >> $GITHUB_OUTPUT
-              ;;
-            "2023 Only")
-              echo 'years=["2023"]' >> $GITHUB_OUTPUT
-              ;;
-            "2024 Only")
-              echo 'years=["2024"]' >> $GITHUB_OUTPUT
-              ;;
-            "2025 Only")
-              echo 'years=["2025"]' >> $GITHUB_OUTPUT
-              ;;
-            "2026 Only")
-              echo 'years=["2026"]' >> $GITHUB_OUTPUT
-              ;;
-            "2027 Only")
-              echo 'years=["2027"]' >> $GITHUB_OUTPUT
-              ;;
-          esac
+          import json, os, re, sys
+
+          raw = os.environ['YEARS_INPUT'].strip()
+          MIN_YEAR, MAX_YEAR = 2000, 2030
+          years = set()
+
+          for token in raw.split(','):
+              token = token.strip()
+              if not token:
+                  continue
+              m = re.fullmatch(r'(\d{4})\s*-\s*(\d{4})', token)
+              if m:
+                  start, end = int(m.group(1)), int(m.group(2))
+                  if start > end:
+                      start, end = end, start
+                  for y in range(start, end + 1):
+                      years.add(y)
+              elif re.fullmatch(r'\d{4}', token):
+                  years.add(int(token))
+              else:
+                  print(f'::error::Unrecognized token: "{token}". Use 2024, 2021-2024, or 2023, 2024, 2008.')
+                  sys.exit(1)
+
+          if not years:
+              print('::error::No years parsed from input.')
+              sys.exit(1)
+
+          bad = sorted(y for y in years if not (MIN_YEAR <= y <= MAX_YEAR))
+          if bad:
+              print(f'::error::Year(s) out of range {MIN_YEAR}-{MAX_YEAR}: {bad}')
+              sys.exit(1)
+
+          ordered = [str(y) for y in sorted(years)]
+          print(f'Parsed years: {ordered}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+              fh.write('years=' + json.dumps(ordered) + '\n')
+        env:
+          YEARS_INPUT: ${{ github.event.inputs.years_to_scrape }}
 
   # Job 2: Scrape timelines for selected years in parallel
   scrape:
