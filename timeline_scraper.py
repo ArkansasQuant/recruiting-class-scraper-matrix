@@ -745,6 +745,26 @@ async def scrape_year(browser, year: int) -> int:
         append_to_csv(filename, buffer)
         print(f"    💾 Saved final {len(buffer)} event rows")
 
+    # FINAL SORT PASS: the file was written incrementally in scrape order. Re-sort
+    # so each player's events are chronological. Grouped by 247 ID (unique) rather
+    # than name, so two players sharing a name never interleave. Done once at the
+    # end — never during the incremental saves, so the crash-safety of buffering
+    # is preserved. Players with unparseable dates sort last within their block.
+    try:
+        import pandas as pd
+        df = pd.read_csv(filename, dtype=str)
+        df['__d'] = pd.to_datetime(df['Event Date'], format='%m/%d/%Y', errors='coerce')
+        # NaT (No Events Found / bad dates) sorted last within each player
+        df = df.sort_values(
+            by=['247 ID', '__d'],
+            ascending=[True, True],
+            na_position='last'
+        ).drop(columns='__d')
+        df.to_csv(filename, index=False)
+        print(f"    ↕️  Sorted {filename.name} chronologically per player")
+    except Exception as e:
+        print(f"    ⚠️  Could not sort {filename.name} (data is intact, just unsorted): {e}")
+
     print(f"\n✅ {year}: {total_rows} event rows written to {filename.name}")
     return total_rows
 
