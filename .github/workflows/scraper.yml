@@ -4,43 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       years_to_scrape:
-        description: 'Which years to scrape'
+        description: 'Years: ranges (2021-2024), lists (2023, 2024, 2008), or mixed (2008, 2015-2017, 2024)'
         required: true
-        type: choice
-        options:
-          - 'All Years (2008-2027)'
-          - 'All Years (2008-2026)'
-          - 'All Years (2015-2027)'
-          - 'All Years (2015-2026)'
-          - 'All Years (2018-2027)'
-          - 'All Years (2020-2026)'
-          - 'Historical (2008-2014)'
-          - 'Historical (2015-2019)'
-          - 'Historical (2018-2019)'
-          - 'Core Years (2020-2022)'
-          - 'Recent Years (2023-2026)'
-          - 'Future Planning (2020-2027)'
-          - '2008 Only'
-          - '2009 Only'
-          - '2010 Only'
-          - '2011 Only'
-          - '2012 Only'
-          - '2013 Only'
-          - '2014 Only'
-          - '2015 Only'
-          - '2016 Only'
-          - '2017 Only'
-          - '2018 Only'
-          - '2019 Only'
-          - '2020 Only'
-          - '2021 Only'
-          - '2022 Only'
-          - '2023 Only'
-          - '2024 Only'
-          - '2025 Only'
-          - '2026 Only'
-          - '2027 Only'
-        default: 'All Years (2020-2026)'
+        type: string
+        default: '2024'
       test_mode:
         description: 'Test mode (300 players) or Full scrape'
         required: false
