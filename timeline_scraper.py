@@ -49,7 +49,7 @@ from bs4 import BeautifulSoup
 YEARS = [int(os.getenv('SCRAPE_YEAR', '2026'))]   # Set by workflow
 OUTPUT_DIR = Path("output")
 TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
-MAX_CONCURRENT = 4
+MAX_CONCURRENT = int(os.getenv('MAX_CONCURRENT', '6'))   # was 4; 6 is a safe bump
 START_FROM_PLAYER = int(os.getenv('START_FROM', '0'))
 MAX_TIMELINE_PAGES = 15   # safety cap on pagination per player
 
@@ -89,15 +89,63 @@ EVENT_TYPE_RULES = [
     ("Decommitment",        ["decommit", "de-commit", "decommitted", "backs off", "reopened"]),
     ("Commitment",          ["commitment", "committed", "commits to", "pledge", "pledged"]),
     ("Signing",             ["signed", "signing", "loi", "letter of intent", "enrolled"]),
-    ("Offer Visit/Contact", ["in-home", "in home visit", "home visit", "spring visit", "game day visit"]),
     ("Draft",               ["draft", "drafted", "selected by", "picked by"]),
     ("Crystal Ball",        ["crystal ball", "prediction", "predicts", "expert pick", "forecast"]),
 ]
 
+# -----------------------------------------------------------------------------
+# PREFIX-BASED CLASSIFICATION (primary path)
+# -----------------------------------------------------------------------------
+# 247 timeline rows reliably read:  "<Date>: <Event Label> <player> <verb> <Team>"
+# We classify off that LABEL prefix, which is far more accurate than scanning the
+# whole sentence (the old keyword scan mislabeled "Unofficial Visit" as Official
+# because the substring "official visit" matched first).
+#
+# Longest/most-specific labels MUST come first so e.g. "Transfer Portal Withdrawal"
+# is tested before "Transfer Portal", and "Transfer Portal" before "Transfer".
+
+PREFIX_RULES = [
+    ("Transfer Portal Withdrawal", "Transfer Portal Withdrawal"),
+    ("Transfer Portal",            "Transfer Portal Entry"),
+    ("Transfer",                   "Transfer Commitment"),
+    ("Unofficial Visit",           "Unofficial Visit"),
+    ("Official Visit",             "Official Visit"),
+    ("Junior Day",                 "Junior Day"),
+    ("School Camp",                "Camp"),
+    ("Coach Visit",                "Coach Visit"),
+    ("Commitment",                 "Commitment"),
+    ("Decommit",                   "Decommitment"),
+    ("Signing",                    "Signing"),
+    ("Enrollment",                 "Enrollment"),
+    ("Crystal Ball",               "Crystal Ball"),
+    ("Offer",                      "__DROP__"),   # offers excluded per spec
+    ("Leaders Named",              "Leaders Named"),
+    ("Leaders",                    "Leaders Named"),
+    ("Game Stats",                 "Game/Stats"),
+    ("Game",                       "Game/Stats"),
+    ("Update",                     "Update"),
+]
+
+# Date prefix: "March 31, 2022:"  or  "3/31/2022:"
+_DATE_PREFIX = re.compile(r'^\s*(?:[A-Z][a-z]+\s+\d{1,2},\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})\s*:?\s*')
+
+
+def _strip_date_prefix(text: str) -> str:
+    return _DATE_PREFIX.sub('', text, count=1).strip()
+
 
 def classify_event(text: str) -> str:
-    """Return normalized Event Type from raw event text. 'Other' if unmatched."""
-    low = text.lower()
+    """
+    Return normalized Event Type. Primary path = match the 247 label that appears
+    immediately after the date. Returns '__DROP__' for offers (caller discards).
+    Falls back to keyword scan only if no prefix label matches.
+    """
+    body = _strip_date_prefix(text)
+    for prefix, label in PREFIX_RULES:
+        if body.startswith(prefix):
+            return label
+    # Fallback: loose keyword scan (rare — only if prefix is unexpected)
+    low = body.lower()
     for label, keywords in EVENT_TYPE_RULES:
         for kw in keywords:
             if kw in low:
@@ -163,27 +211,110 @@ def extract_date(text: str) -> str:
 
 def extract_team(text: str, event_type: str) -> str:
     """
-    Best-effort extraction of the team/school associated with an event.
-    Timelines phrase this many ways: 'visited Arkansas', 'commits to LSU',
-    'Oklahoma offered', 'camped at Texas'. We grab the proper-noun phrase
-    after a linking verb/preposition.
+    Extract the team associated with an event, matched against the actual 247
+    phrasings observed in the data:
+        Unofficial:  "... unofficially visits Ohio State Buckeyes"
+        Official:    "... officially visits Oregon Ducks"
+        Camp:        "... attends Alabama Crimson Tide camp"
+        Junior Day:  "... attends Junior Day at Duke Blue Devils"
+        Commitment:  "... commits to Ohio State Buckeyes"
+        Transfer:    "... commits to Oregon Ducks" / "entered the transfer portal"
+        Signing:     "... signs letter of intent to Ohio State Buckeyes"
+        Enrollment:  "... enrolls at Ohio State Buckeyes"
+        Decommit:    "... decommits from Miami Hurricanes"
+        Coach Visit: "Mario Cristobal from Miami Hurricanes visits ..."
+        Crystal Ball:"... will commit to Clemson Tigers"
+    Returns "NA" when no team is meaningfully attached (e.g. portal entry, update).
     """
-    patterns = [
-        r'(?:commits?\s+to|committed\s+to|pledged?\s+to)\s+([A-Z][A-Za-z&\.\'\- ]+)',
-        r'(?:visit(?:ed)?|camp(?:ed)?|signed\s+with|enrolled\s+at)\s+(?:to|at|with)?\s*([A-Z][A-Za-z&\.\'\- ]+)',
-        r'(?:to|at|with)\s+([A-Z][A-Za-z&\.\'\- ]+)',
-        r'([A-Z][A-Za-z&\.\'\- ]+?)\s+(?:offered|selected|drafted|picked)',
-    ]
-    for pat in patterns:
-        m = re.search(pat, text)
-        if m:
-            team = clean_text(m.group(1))
-            # Trim trailing filler words
-            team = re.sub(r'\b(on|in|for|during|the|a|an)\b.*$', '', team).strip()
-            team = team.rstrip('.,;:')
-            if 1 < len(team) <= 40:
-                return team
+    body = _strip_date_prefix(text)
+
+    # Events that inherently have no single team
+    if event_type in ("Transfer Portal Entry", "Transfer Portal Withdrawal",
+                       "Game/Stats", "Update", "Leaders Named", "No Events Found"):
+        return "NA"
+
+    # Camp: "attends <Team> camp"
+    m = re.search(r'attends\s+(.+?)\s+camp\b', body)
+    if m:
+        return _tidy_team(m.group(1))
+
+    # Junior Day: "attends Junior Day at <Team>"
+    m = re.search(r'Junior Day at\s+(.+)$', body)
+    if m:
+        return _tidy_team(m.group(1))
+
+    # Coach Visit: "<Coach> from <Team> visits <player>"
+    m = re.search(r'\bfrom\s+(.+?)\s+visits\b', body)
+    if m:
+        return _tidy_team(m.group(1))
+
+    # Visits: "... visits <Team>"  (covers officially/unofficially visits)
+    m = re.search(r'\bvisits\s+(.+)$', body)
+    if m:
+        return _tidy_team(m.group(1))
+
+    # Commit / transfer-commit / crystal ball: "commit(s) to <Team>"
+    m = re.search(r'commits?\s+to\s+(.+)$', body) or re.search(r'will commit to\s+(.+?)(?:\s*\.\.\.|$)', body)
+    if m:
+        return _tidy_team(m.group(1))
+
+    # Signing: "signs letter of intent to <Team>" / "signs with <Team>"
+    m = re.search(r'(?:letter of intent to|signs with)\s+(.+)$', body)
+    if m:
+        return _tidy_team(m.group(1))
+
+    # Enrollment: "enrolls at <Team>"
+    m = re.search(r'enrolls? at\s+(.+)$', body)
+    if m:
+        return _tidy_team(m.group(1))
+
+    # Decommit: "decommits from <Team>"
+    m = re.search(r'decommits?\s+from\s+(.+)$', body)
+    if m:
+        return _tidy_team(m.group(1))
+
     return "NA"
+
+
+def _tidy_team(raw: str) -> str:
+    """
+    Clean a captured team string.
+
+    The capture sometimes runs past the team name into trailing context, e.g.:
+        "Tennessee Volunteers for Alabama game"
+        "Alabama Crimson Tide for Texas A&M game"
+        "Auburn Tigers 7-on-7"
+        "Clemson Tigers ...More"
+
+    We must trim that tail WITHOUT ever cutting into a real team name. The safe
+    rule: real program names never contain a lowercase connector word
+    (for / during / ahead / while / to attend / etc.), but every tail begins with
+    one. So we cut at the first lowercase connector token. This preserves names
+    like "North Texas", "Boston College", "Arkansas State Red Wolves",
+    "Texas A&M Aggies", "Ole Miss Rebels" — none of which contain those words —
+    while removing "for Alabama game", "for spring practice", "7-on-7", etc.
+    """
+    team = clean_text(raw)
+
+    # 1) Cut anything from "...More" / ellipsis onward
+    team = re.split(r'\s*\.\.\.', team, maxsplit=1)[0]
+
+    # 2) Cut at the first lowercase connector word that signals trailing context.
+    #    \b...\b on lowercase-only tokens means "Arkansas", "State", "A&M" (which
+    #    are capitalized / contain &) are never matched — only true connectors.
+    team = re.split(
+        r'\s+(?:for|during|ahead|while|after|before|as|to\s+attend|on\s+a|in\s+a)\s+',
+        team, maxsplit=1
+    )[0]
+
+    # 3) Remove a trailing standalone "game"/"visit"/"practice"/"scrimmage" if it
+    #    survived (defensive; usually already gone with the connector).
+    team = re.sub(r'\s+(?:game|practice|scrimmage|7-on-7|camp)\s*$', '', team, flags=re.IGNORECASE)
+
+    # 4) Strip stray punctuation/quotes
+    team = team.strip().strip('"\'').rstrip('.,;:')
+
+    return team if 1 < len(team) <= 45 else "NA"
 
 
 def append_to_csv(filename: Path, rows: list):
@@ -195,7 +326,7 @@ def append_to_csv(filename: Path, rows: list):
         writer.writerows(rows)
 
 
-async def rand_delay(lo=0.4, hi=1.1):
+async def rand_delay(lo=0.2, hi=0.6):
     await asyncio.sleep(random.uniform(lo, hi))
 
 
@@ -399,8 +530,8 @@ async def extract_all_timeline_events(page) -> list:
                 continue
             date = extract_date(text)
             etype = classify_event(text)
-            # Skip pure offer rows (spec excludes offers) unless they carry a visit/commit too
-            if etype == "Other" and 'offer' in text.lower():
+            # Offers are excluded per spec (classify_event returns the __DROP__ sentinel)
+            if etype == "__DROP__":
                 continue
             team = extract_team(text, etype)
             key = (date, etype, team, text[:60])
@@ -417,7 +548,11 @@ async def extract_all_timeline_events(page) -> list:
     try:
         # Try to reach the full timeline page
         await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-        await page.wait_for_timeout(1200)
+        # Wait for the timeline link to appear rather than a flat 1200ms sleep
+        try:
+            await page.wait_for_selector('a[href*="TimelineEvents"]', timeout=2500)
+        except Exception:
+            pass  # no full-timeline link; we'll use the abbreviated fallback
         see_all = page.locator('a[href*="TimelineEvents"]')
         if await see_all.count() > 0:
             href = await see_all.first.get_attribute('href')
@@ -425,16 +560,25 @@ async def extract_all_timeline_events(page) -> list:
                 full_url = f"https://247sports.com{href}" if href.startswith('/') else href
                 try:
                     await page.goto(full_url, wait_until='domcontentloaded', timeout=20000)
-                    await page.wait_for_timeout(800)
+                    # Wait for the event list instead of a flat 800ms sleep
+                    try:
+                        await page.wait_for_selector('ul.timeline-event-index_lst li', timeout=4000)
+                    except Exception:
+                        await page.wait_for_timeout(500)
                     page_count = 0
                     while page_count < MAX_TIMELINE_PAGES:
                         soup = BeautifulSoup(await page.content(), 'html.parser')
+                        before = len(events)
                         harvest(soup)
                         nxt = page.locator('li.next_itm a')
                         try:
                             if await nxt.count() > 0 and await nxt.first.is_visible():
                                 await nxt.first.click()
-                                await page.wait_for_timeout(random.randint(700, 1200))
+                                # Event-driven: wait for DOM to update, fall back to short sleep
+                                try:
+                                    await page.wait_for_load_state('domcontentloaded', timeout=4000)
+                                except Exception:
+                                    await page.wait_for_timeout(random.randint(500, 800))
                                 page_count += 1
                             else:
                                 break
@@ -465,9 +609,14 @@ def resolve_committed_to(soup, events) -> str:
             t = clean_text(link.get_text())
             if t and t.lower() not in ('committed', 'commitment', 'signed'):
                 return t
-    # Otherwise the most recent Commitment/Signing event team
+    # Otherwise: the original HS destination. Prefer Signing (binding), else the
+    # first (earliest) Commitment. Transfer events are intentionally ignored here
+    # so this column stays the high-school recruitment outcome.
     for e in events:
-        if e["type"] in ("Commitment", "Signing") and e["team"] != "NA":
+        if e["type"] == "Signing" and e["team"] != "NA":
+            return e["team"]
+    for e in events:
+        if e["type"] == "Commitment" and e["team"] != "NA":
             return e["team"]
     return "NA"
 
@@ -481,8 +630,28 @@ async def scrape_player_timeline(page, url, year, idx, total) -> list:
     try:
         print(f"  [{idx}/{total}] {url.split('/player/')[-1].rstrip('/')}")
         await page.goto(url, wait_until='domcontentloaded', timeout=30000)
-        await page.wait_for_timeout(700)
-        await navigate_to_hs_profile(page)
+
+        # Event-driven wait: continue as soon as the profile header is present,
+        # instead of a flat 700ms sleep for every player. Falls back to a short
+        # sleep only if the selector never appears.
+        try:
+            await page.wait_for_selector('.profile-header, h1.name, .name', timeout=4000)
+        except Exception:
+            await page.wait_for_timeout(500)
+
+        # Only hop to the (HS) sub-profile if we're NOT already seeing a rankings
+        # block. Most players load straight onto a usable profile, so this skips
+        # thousands of redundant page.goto calls.
+        needs_hop = await page.evaluate("""
+            () => {
+                const hasRankings = !!document.querySelector('section.rankings, section.rankings-section');
+                const hsLink = [...document.querySelectorAll('a')].find(a => a.textContent.includes('(HS)'));
+                // hop only if no rankings visible AND an (HS) link exists to hop to
+                return (!hasRankings && !!hsLink);
+            }
+        """)
+        if needs_hop:
+            await navigate_to_hs_profile(page)
 
         soup = BeautifulSoup(await page.content(), 'html.parser')
         identity = parse_identity_and_ratings(soup, url, year)
