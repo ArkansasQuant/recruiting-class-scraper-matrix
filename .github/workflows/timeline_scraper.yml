@@ -154,12 +154,15 @@ jobs:
 
         combined = pd.concat(dfs, ignore_index=True)
 
-        # Sort by class year (desc), then player, then event date (asc)
+        # Sort by class year (desc), then player (by unique 247 ID), then event
+        # date (asc). Grouping by 247 ID rather than name prevents two players who
+        # share a name from interleaving. NaT dates (No Events Found) sort last.
         combined['High School Class'] = pd.to_numeric(combined['High School Class'], errors='coerce')
         combined['__d'] = pd.to_datetime(combined['Event Date'], format='%m/%d/%Y', errors='coerce')
         combined = combined.sort_values(
-            by=['High School Class', 'Player Name', '__d'],
-            ascending=[False, True, True]
+            by=['High School Class', '247 ID', '__d'],
+            ascending=[False, True, True],
+            na_position='last'
         ).drop(columns='__d')
 
         years = sorted(combined['High School Class'].dropna().unique().astype(int))
