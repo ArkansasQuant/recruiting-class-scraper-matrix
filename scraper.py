@@ -617,9 +617,6 @@ async def parse_profile(page, url: str, year: int, player_num: int, total: int) 
         
         await navigate_to_recruiting_profile(page)
         
-        # v3 FIX: Navigate to HS profile if on JUCO/NCAA page
-        await navigate_to_hs_profile(page)
-        
         # LAZY-RENDER FIX: ensure the (below-the-fold) rankings block is in the DOM
         await _wait_for_rankings(page)
         
@@ -657,14 +654,29 @@ async def parse_profile(page, url: str, year: int, player_num: int, total: int) 
         
         data['Class'] = str(year)
         
-        # --- RANKINGS ---
+        # --- RANKINGS (first attempt: on whatever profile loaded) ---
         _parse_rankings(soup, data)
 
-        # RETRY-ON-EMPTY (lazy-render safety net): if BOTH the 247 and Composite
-        # ratings came back empty, the rankings block likely hadn't finished
-        # rendering when we grabbed HTML. Wait once more, re-grab, and re-parse.
-        # Additive: only fires when we'd otherwise have NO rating at all, so it
-        # cannot disturb players who already parsed correctly.
+        # COVER-PROFILE FALLBACK: if BOTH ratings are empty, the loaded page is
+        # likely a cover/NCAA profile (player enrolled or transferred) whose
+        # rankings live on the HS sub-profile instead. Navigate to the HS profile
+        # and re-parse. This ONLY fires when we'd otherwise have no rating at all,
+        # so players whose rating is already on the base profile (e.g. current
+        # prospects like Knox Kiffin) are never navigated away — protecting the
+        # ~98% that already work.
+        if data['247 Rating'] == "NA" and data['Composite Rating'] == "NA":
+            try:
+                navigated = await navigate_to_hs_profile(page)
+                if navigated:
+                    await _wait_for_rankings(page)
+                    await page.wait_for_timeout(500)
+                    hs_soup = BeautifulSoup(await page.content(), 'html.parser')
+                    _parse_rankings(hs_soup, data)
+            except Exception:
+                pass
+
+        # LAZY-RENDER RETRY: if STILL empty after any HS navigation, the block may
+        # simply not have finished rendering. Wait once more and re-parse in place.
         if data['247 Rating'] == "NA" and data['Composite Rating'] == "NA":
             try:
                 await _wait_for_rankings(page)
