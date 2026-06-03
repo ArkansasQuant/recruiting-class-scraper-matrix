@@ -337,21 +337,66 @@ async def navigate_to_recruiting_profile(page) -> bool:
         return False
 
 async def navigate_to_hs_profile(page) -> bool:
-    """If on a JUCO/NCAA profile, navigate to the (HS) high school profile."""
+    """
+    If on a cover/NCAA/JUCO profile, navigate to the high-school recruiting
+    profile so the HS rankings (rating, stars, ranks) are present to parse.
+
+    Built against the real institution-block markup (confirmed via live DOM):
+
+        <div class="institution-block">
+          <button data-js="institution-selector">NCAA ▾</button>
+          <ul class="institution-list">
+            <li><a class="profile-card__institution-list-link"
+                   href=".../college-356988">LSU (NCAA)</a></li>
+            <li><a class="profile-card__institution-list-link"
+                   href=".../college-330851">USC (NCAA)</a></li>
+            <li><a class="profile-card__institution-list-link"
+                   href=".../high-school-281777">Inglewood (HS)</a></li>
+            <li><a class="profile-card__institution-list-link"
+                   href=".../high-school-292509">Corona Centennial (HS)</a></li>
+          </ul>
+        </div>
+
+    Why the old version missed: it grabbed links before the institution-list
+    rendered, and didn't target the specific link class. This version waits for
+    the list, queries the exact class, and — when a player has MULTIPLE high
+    schools (e.g. Husan Longstreet: Inglewood + Corona Centennial) — picks the
+    LAST (HS) link, which is the most recent school carrying the recruiting grade.
+    Matches on the /high-school- URL pattern, not just the '(HS)' label text,
+    so it's robust to label formatting.
+    """
     try:
+        # Wait briefly for the institution list to exist (it's part of the header,
+        # but can populate a beat after domcontentloaded on cover profiles).
+        try:
+            await page.wait_for_selector('ul.institution-list a.profile-card__institution-list-link',
+                                         timeout=4000)
+        except Exception:
+            pass  # no dropdown -> single-profile player; nothing to navigate to
+
         hs_href = await page.evaluate("""
             () => {
-                const links = [...document.querySelectorAll('a')];
-                const hs = links.find(a => a.textContent.includes('(HS)'));
-                return hs ? hs.href : null;
+                const links = [...document.querySelectorAll(
+                    'ul.institution-list a.profile-card__institution-list-link, a.profile-card__institution-list-link'
+                )];
+                // Prefer the /high-school- URL pattern; fall back to '(HS)' label.
+                const hs = links.filter(a =>
+                    /\\/high-school-\\d+/.test(a.href) || a.textContent.includes('(HS)')
+                );
+                if (hs.length === 0) return null;
+                // LAST high-school link = most recent school = carries the grade.
+                return hs[hs.length - 1].href;
             }
         """)
+
         if hs_href:
-            await page.goto(hs_href, wait_until='domcontentloaded', timeout=30000)
-            await page.wait_for_timeout(1000)
+            # Don't re-navigate if we're already on this exact HS profile.
+            if hs_href.rstrip('/') != page.url.rstrip('/'):
+                await page.goto(hs_href, wait_until='domcontentloaded', timeout=30000)
+                await page.wait_for_timeout(1000)
             return True
         return False
-    except:
+    except Exception:
         return False
 
 async def parse_timeline(page, data, year, do_deep_dive: bool):
